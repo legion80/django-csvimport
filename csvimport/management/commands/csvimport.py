@@ -135,9 +135,10 @@ class Command(LabelCommand):
 
     def check_fkey(self, key, field):
         """ Build fkey mapping via introspection of models """
-        #TODO fix to find related field name rather than assume second field
+        # TODO Foreign fields are assumed to be listed based on the type's second defined field.
+        # This should be fixed to allow related names to be specified.
         if not key.endswith('_id'):
-            if field.__class__ == models.ForeignKey:
+            if field.__class__ in (models.ForeignKey, models.ManyToManyField):
                 key += '(%s|%s)' % (field.related.parent_model.__name__,
                                     field.related.parent_model._meta.fields[1].name,)
         return key
@@ -178,7 +179,7 @@ class Command(LabelCommand):
             csvimportid = 0
         mapping = []
         fieldmap = {}
-        for field in self.model._meta.fields:
+        for field in self.model._meta.fields + self.model._meta.many_to_many:
             fieldmap[field.name] = field
             if field.__class__ == models.ForeignKey:
                 fieldmap[field.name+"_id"] = field
@@ -211,6 +212,7 @@ class Command(LabelCommand):
                                    to the CSV file or supply a mapping list''' %
                                 (self.model._meta.app_label, self.model.__name__))
             return loglist
+
         for row in self.csvfile[1:]:
             counter += 1
             infolist.append('Import %s %i' % (self.model.__name__, counter))
@@ -218,6 +220,8 @@ class Command(LabelCommand):
             try:
                 model_instance = self.model()
                 model_instance.csvimport_id = csvimportid
+
+                m2m_fields = {}
 
                 for (column, field, foreignkey) in self.mappings:
                     field_type = fieldmap.get(field).get_internal_type()
@@ -266,7 +270,10 @@ class Command(LabelCommand):
                                                     % (field, row[column]))
                                 row[column] = 0
                     try:
-                        model_instance.__setattr__(field, row[column])
+                        if field_type == 'ManyToManyField':
+                            m2m_fields[field] = row[column]
+                        else:
+                            model_instance.__setattr__(field, row[column])
                     except:
                         try:
                             row[column] = model_instance.getattr(field).to_python(row[column])
@@ -290,8 +297,9 @@ class Command(LabelCommand):
                 if self.deduplicate:
                     matchdict = {}
                     for (column, field, foreignkey) in self.mappings:
-                        matchdict[field + '__exact'] = getattr(model_instance,
-                                                               field, None)
+                        if field not in m2m_fields:
+                            matchdict[field + '__exact'] = getattr(model_instance,
+                                                                   field, None)
                     try:
                         self.model.objects.get(**matchdict)
                         if self.debug:
@@ -306,6 +314,8 @@ class Command(LabelCommand):
                     importing_csv.send(sender=model_instance,
                                         row=dict(zip(self.csvfile[:1][0], row)))
                     model_instance.save()
+                    for m2m_field in m2m_fields:
+                        getattr(model_instance, m2m_field).add(m2m_fields[m2m_field])
                     imported_csv.send(sender=model_instance,
                                       row=dict(zip(self.csvfile[:1][0], row)))
 
