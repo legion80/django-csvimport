@@ -162,7 +162,13 @@ class Command(LabelCommand):
 
     def run(self, logid=0):
         """ Run the csvimport """
+        infolist = []
         loglist = []
+        def log_error(message):
+            infolist.append(message)
+            loglist.append(message)
+
+
         if self.nameindexes:
             indexes = self.csvfile.pop(0)
         counter = 0
@@ -177,8 +183,13 @@ class Command(LabelCommand):
             if field.__class__ == models.ForeignKey:
                 fieldmap[field.name+"_id"] = field
 
+        if self.debug:
+            infolist.append('### Constructed fieldmap:')
+            for key in fieldmap.keys():
+                infolist.append('    %s: %s' % (key, fieldmap[key]))
+
         if self.mappings:
-            loglist.append('Using manually entered mapping list')
+            log_error('Using manually entered mapping list')
         else:
             for i, heading in enumerate(self.csvfile[0]):
                 for key in ((heading, heading.lower(),) if heading != heading.lower() else (heading,)):
@@ -187,19 +198,23 @@ class Command(LabelCommand):
                         key = self.check_fkey(key, field)
                         mapping.append('column%s=%s' % (i+1, key))
             mappingstr = ','.join(mapping)
+            if self.debug:
+                infolist.append('### Mapping CSV header to fields')
+                for mapitem in mapping:
+                    infolist.append('    %s' % mapitem)
             if mapping:
-                loglist.append('Using mapping from first row of CSV file')
+                log_error('Using mapping from first row of CSV file')
                 self.mappings = self.__mappings(mappingstr)
         if not self.mappings:
-            loglist.append('''No fields in the CSV file match %s.%s\n
+            log_error('''No fields in the CSV file match %s.%s\n
                                    - you must add a header field name row
                                    to the CSV file or supply a mapping list''' %
                                 (self.model._meta.app_label, self.model.__name__))
             return loglist
         for row in self.csvfile[1:]:
-            if CSVIMPORT_LOG == 'logger':
-                logger.info("Import %s %i", self.model.__name__, counter)
             counter += 1
+            if logger is not None:
+                infolist.append('Import %s %i' % (self.model.__name__, counter))
 
             model_instance = self.model()
             model_instance.csvimport_id = csvimportid
@@ -221,7 +236,7 @@ class Command(LabelCommand):
                     row[column] = self.insert_fkey(foreignkey, row[column])
 
                 if self.debug:
-                    loglist.append('%s.%s = "%s"' % (self.model.__name__,
+                    infolist.append('%s.%s = "%s"' % (self.model.__name__,
                                                           field, row[column]))
                 # Tidy up boolean data
                 if field_type in BOOLEAN:
@@ -235,20 +250,20 @@ class Command(LabelCommand):
                         try:
                             row[column] = float(row[column])
                         except:
-                            loglist.append('Column %s = %s is not a number so is set to 0' \
+                            log_error('Column %s = %s is not a number so is set to 0' \
                                                 % (field, row[column]))
                             row[column] = 0
                     if field_type in INTEGER:
                         if row[column] > 9223372036854775807:
-                            loglist.append('Column %s = %s more than the max integer 9223372036854775807' \
+                            log_error('Column %s = %s more than the max integer 9223372036854775807' \
                                                 % (field, row[column]))
                         if str(row[column]).lower() in ('nan', 'inf', '+inf', '-inf'):
-                            loglist.append('Column %s = %s is not an integer so is set to 0' \
+                            log_error('Column %s = %s is not an integer so is set to 0' \
                                                 % (field, row[column]))
                             row[column] = 0
                         row[column] = int(row[column])
                         if row[column] < 0 and field_type.startswith('Positive'):
-                            loglist.append('Column %s = %s, less than zero so set to 0' \
+                            log_error('Column %s = %s, less than zero so set to 0' \
                                                 % (field, row[column]))
                             row[column] = 0
                 try:
@@ -261,7 +276,7 @@ class Command(LabelCommand):
                             row[column] = datetime(row[column])
                         except:
                             row[column] = None
-                            loglist.append('Column %s failed' % field)
+                            log_error('Column %s failed' % field)
 
             if self.defaults:
                 for (field, value, foreignkey) in self.defaults:
@@ -298,18 +313,18 @@ class Command(LabelCommand):
 
                 # Catch duplicate key error.
                 if error_number != 1062:
-
-                    loglist.append(
+                    log_error(
                         'Database Error: %s, Number: %d' % (error_message,
                                                             error_number))
             except OverflowError:
                 pass 
 
             if CSVIMPORT_LOG == 'logger':
-                for line in loglist:
+                for line in infolist:
                     logger.info(line)
             self.loglist.extend(loglist)
             loglist = []
+            infolist = []
         if self.loglist:
             self.props = { 'file_name':self.file_name,
                            'import_user':'cron',
