@@ -213,118 +213,120 @@ class Command(LabelCommand):
             return loglist
         for row in self.csvfile[1:]:
             counter += 1
-            if logger is not None:
-                infolist.append('Import %s %i' % (self.model.__name__, counter))
+            infolist.append('Import %s %i' % (self.model.__name__, counter))
 
-            model_instance = self.model()
-            model_instance.csvimport_id = csvimportid
+            try:
+                model_instance = self.model()
+                model_instance.csvimport_id = csvimportid
 
-
-            for (column, field, foreignkey) in self.mappings:
-                field_type = fieldmap.get(field).get_internal_type()
-                if self.nameindexes:
-                    column = indexes.index(column)
-                else:
-                    column = int(column)-1
-
-                try:
-                    row[column] = row[column].strip()
-                except AttributeError:
-                    pass
-
-                if foreignkey:
-                    row[column] = self.insert_fkey(foreignkey, row[column])
-
-                if self.debug:
-                    infolist.append('%s.%s = "%s"' % (self.model.__name__,
-                                                          field, row[column]))
-                # Tidy up boolean data
-                if field_type in BOOLEAN:
-                    row[column] = row[column] in BOOLEAN_TRUE
-
-                # Tidy up numeric data
-                if field_type in NUMERIC:
-                    if not row[column]:
-                        row[column] = 0
-                    else:
-                        try:
-                            row[column] = float(row[column])
-                        except:
-                            log_error('Column %s = %s is not a number so is set to 0' \
-                                                % (field, row[column]))
-                            row[column] = 0
-                    if field_type in INTEGER:
-                        if row[column] > 9223372036854775807:
-                            log_error('Column %s = %s more than the max integer 9223372036854775807' \
-                                                % (field, row[column]))
-                        if str(row[column]).lower() in ('nan', 'inf', '+inf', '-inf'):
-                            log_error('Column %s = %s is not an integer so is set to 0' \
-                                                % (field, row[column]))
-                            row[column] = 0
-                        row[column] = int(row[column])
-                        if row[column] < 0 and field_type.startswith('Positive'):
-                            log_error('Column %s = %s, less than zero so set to 0' \
-                                                % (field, row[column]))
-                            row[column] = 0
-                try:
-                    model_instance.__setattr__(field, row[column])
-                except:
-                    try:
-                        row[column] = model_instance.getattr(field).to_python(row[column])
-                    except:
-                        try:
-                            row[column] = datetime(row[column])
-                        except:
-                            row[column] = None
-                            log_error('Column %s failed' % field)
-
-            if self.defaults:
-                for (field, value, foreignkey) in self.defaults:
-                    try:
-                        done = model_instance.getattr(field)
-                    except:
-                        done = False
-                    if not done:
-                        if foreignkey:
-                            value = self.insert_fkey(foreignkey, value)
-                        model_instance.__setattr__(field, value)
-            if self.deduplicate:
-                matchdict = {}
                 for (column, field, foreignkey) in self.mappings:
-                    matchdict[field + '__exact'] = getattr(model_instance,
-                                                           field, None)
+                    field_type = fieldmap.get(field).get_internal_type()
+                    if self.nameindexes:
+                        column = indexes.index(column)
+                    else:
+                        column = int(column)-1
+
+                    try:
+                        row[column] = row[column].strip()
+                    except AttributeError:
+                        pass
+
+                    if foreignkey:
+                        row[column] = self.insert_fkey(foreignkey, row[column])
+
+                    if self.debug:
+                        infolist.append('    %s.%s = "%s"' % (self.model.__name__,
+                                                              field, row[column]))
+                    # Tidy up boolean data
+                    if field_type in BOOLEAN:
+                        row[column] = row[column] in BOOLEAN_TRUE
+
+                    # Tidy up numeric data
+                    if field_type in NUMERIC:
+                        if not row[column]:
+                            row[column] = 0
+                        else:
+                            try:
+                                row[column] = float(row[column])
+                            except:
+                                log_error('Column %s = %s is not a number so is set to 0' \
+                                                    % (field, row[column]))
+                                row[column] = 0
+                        if field_type in INTEGER:
+                            if row[column] > 9223372036854775807:
+                                log_error('Column %s = %s more than the max integer 9223372036854775807' \
+                                                    % (field, row[column]))
+                            if str(row[column]).lower() in ('nan', 'inf', '+inf', '-inf'):
+                                log_error('Column %s = %s is not an integer so is set to 0' \
+                                                    % (field, row[column]))
+                                row[column] = 0
+                            row[column] = int(row[column])
+                            if row[column] < 0 and field_type.startswith('Positive'):
+                                log_error('Column %s = %s, less than zero so set to 0' \
+                                                    % (field, row[column]))
+                                row[column] = 0
+                    try:
+                        model_instance.__setattr__(field, row[column])
+                    except:
+                        try:
+                            row[column] = model_instance.getattr(field).to_python(row[column])
+                        except:
+                            try:
+                                row[column] = datetime(row[column])
+                            except:
+                                row[column] = None
+                                log_error('Column %s failed' % field)
+
+                if self.defaults:
+                    for (field, value, foreignkey) in self.defaults:
+                        try:
+                            done = model_instance.getattr(field)
+                        except:
+                            done = False
+                        if not done:
+                            if foreignkey:
+                                value = self.insert_fkey(foreignkey, value)
+                            model_instance.__setattr__(field, value)
+                if self.deduplicate:
+                    matchdict = {}
+                    for (column, field, foreignkey) in self.mappings:
+                        matchdict[field + '__exact'] = getattr(model_instance,
+                                                               field, None)
+                    try:
+                        self.model.objects.get(**matchdict)
+                        if self.debug:
+                            infolist.append('Duplicate found on row %s' % counter)
+                        continue
+                    except ObjectDoesNotExist:
+                        pass
+                    except OverflowError:
+                        pass
+
                 try:
-                    self.model.objects.get(**matchdict)
-                    continue
-                except ObjectDoesNotExist:
-                    pass
+                    importing_csv.send(sender=model_instance,
+                                        row=dict(zip(self.csvfile[:1][0], row)))
+                    model_instance.save()
+                    imported_csv.send(sender=model_instance,
+                                      row=dict(zip(self.csvfile[:1][0], row)))
+
+                except DatabaseError, err:
+                    error_number, error_message = err
+
+                    # Catch duplicate key error.
+                    if error_number != 1062:
+                        log_error(
+                            'Database Error: %s, Number: %d' % (error_message,
+                                                                error_number))
                 except OverflowError:
                     pass
-            try:
 
-                importing_csv.send(sender=model_instance,
-                                    row=dict(zip(self.csvfile[:1][0], row)))
-                model_instance.save()
-                imported_csv.send(sender=model_instance,
-                                  row=dict(zip(self.csvfile[:1][0], row)))
-
-            except DatabaseError, err:
-                error_number, error_message = err
-
-                # Catch duplicate key error.
-                if error_number != 1062:
-                    log_error(
-                        'Database Error: %s, Number: %d' % (error_message,
-                                                            error_number))
-            except OverflowError:
-                pass 
-
-            if CSVIMPORT_LOG == 'logger':
-                for line in infolist:
-                    logger.info(line)
-            self.loglist.extend(loglist)
-            loglist = []
-            infolist = []
+            finally:
+                if 'logger' in globals():
+                    for line in infolist:
+                        logger.info(line)
+                self.loglist.extend(loglist)
+                loglist = []
+                infolist = []
         if self.loglist:
             self.props = { 'file_name':self.file_name,
                            'import_user':'cron',
